@@ -310,6 +310,8 @@ def main():
     else:
         datasets = load_dataset(extension, data_files=data_files, cache_dir="./data/")
 
+
+
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
@@ -346,6 +348,120 @@ def main():
             "You are instantiating a new tokenizer from scratch. This is not supported by this script."
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
+
+    def word2wordpiece_offset(example):
+        w2wp = np.array([0] + example["token_lens"]).cumsum()
+        entity_id2entity = {}
+        for entity in example["entity_mentions"]:
+            entity["start"] = w2wp[entity["start"]]
+            entity["end"] = w2wp[entity["end"]]
+            entity_id2entity[entity["id"]] = entity
+        for relation in example["relation_mentions"]:
+            for argument in relation["arguments"]:
+                argument["start"] = entity_id2entity[argument["entity_id"]]["start"]
+                try:
+                    argument["end"] = entity_id2entity[argument["entity_id"]]["end"]
+                except:
+                    pdb.set_trace()
+        for event in example["event_mentions"]:
+            event["trigger"]["start"] = w2wp[event["trigger"]["start"]]
+            event["trigger"]["end"] = w2wp[event["trigger"]["end"]]
+            for argument in event["arguments"]:
+                argument["start"] = entity_id2entity[argument["entity_id"]]["start"]
+                argument["end"] = entity_id2entity[argument["entity_id"]]["end"]
+        return example
+
+    def example2instance(examples):
+        instances = {
+            "sentence_id": [],
+            "example_id": [],
+            "input_ids": [],
+            "token_type_ids": [],
+            "attention_mask": [],
+            "labels": []
+        }
+        num_examples = len(examples["doc_id"])
+        for ex_id in range(num_examples):
+            example = {}
+            for key in examples:
+                try:
+                    example[key] = examples[key][ex_id]
+                except:
+                    print(examples)
+                    print(ex_id)
+                    print(key)
+                    print(example)
+                    print(len(examples[key]))
+            w2wp = np.array([0] + example["token_lens"]).cumsum()
+            event_spans = set()
+            for event in example["event_mentions"]:
+                trigger = event["trigger"]
+                start = trigger["start"]
+                end = trigger["end"]
+                event_spans.update([_ for _ in range(start, end)])
+                instances["sentence_id"].append(example["sent_id"])
+                instances["example_id"].append(ex_id)
+                instance_pieces = example["pieces"][:start] + [ts_token] + example["pieces"][start:end] + [te_token] + \
+                                  example["pieces"][end:]
+                instance_piece_ids = [tokenizer.cls_token_id] + tokenizer.convert_tokens_to_ids(instance_pieces) + [
+                    tokenizer.sep_token_id]
+                instance_type_ids = [0] * len(instance_piece_ids)
+                instance_attention_mask = [1.0] * len(instance_piece_ids)
+                instances["input_ids"].append(instance_piece_ids)
+                instances["token_type_ids"].append(instance_type_ids)
+                instances["attention_mask"].append(instance_attention_mask)
+                instances["labels"].append(label2id[event["event_type"]])
+            for word_idx, piece_idx in enumerate(w2wp[:-1]):
+                word_length = example["token_lens"][word_idx]
+                if piece_idx in event_spans:
+                    continue
+                else:
+                    start = piece_idx
+                    end = piece_idx + word_length
+                    instances["sentence_id"].append(example["sent_id"])
+                    instances["example_id"].append(ex_id)
+                    instance_pieces = example["pieces"][:start] + [ts_token] + example["pieces"][start:end] + [te_token] + \
+                                      example["pieces"][end:]
+                    instance_piece_ids = [tokenizer.cls_token_id] + tokenizer.convert_tokens_to_ids(instance_pieces) + [
+                        tokenizer.sep_token_id]
+                    instance_type_ids = [0] * len(instance_piece_ids)
+                    instance_attention_mask = [1.0] * len(instance_piece_ids)
+                    instances["input_ids"].append(instance_piece_ids)
+                    instances["token_type_ids"].append(instance_type_ids)
+                    instances["attention_mask"].append(instance_attention_mask)
+                    instances["labels"].append(label2id["Default"])
+        return instances
+
+    def instance2triplet(example):
+        label_id = example["labels"]
+        if label_id == 0:
+            p_example = example
+    
+            example_id = random.randint(0, len(ev_train_instances) - 1)
+            n_example = ev_train_instances[example_id]
+        else:
+            example_id = random.randint(0, len(ev_train_instances_dict[label_id]) - 1)
+            p_example = ev_train_instances_dict[label_id][example_id]
+            while True:
+                example_id = random.randint(0, len(ev_train_instances) - 1)
+                n_example = ev_train_instances[example_id]
+                if n_example["labels"] != example["labels"]:
+                    break
+    
+        # sentence_id
+        # example_id
+        # input_ids
+        # token_type_ids
+        # attention_mask
+        # labels
+    
+        example["input_ids_2"] = p_example["input_ids"]
+        example["token_type_ids_2"] = p_example["token_type_ids"]
+        example["attention_mask_2"] = p_example["attention_mask"]
+        example["input_ids_3"] = n_example["input_ids"]
+        example["token_type_ids_3"] = n_example["token_type_ids"]
+        example["attention_mask_3"] = n_example["attention_mask"]
+        return example
 
     if model_args.model_name_or_path:
         if 'roberta' in model_args.model_name_or_path:
