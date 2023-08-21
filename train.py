@@ -7,6 +7,7 @@ from typing import Optional, Union, List, Dict, Tuple
 import torch
 import collections
 import random
+import numpy as np
 
 from datasets import load_dataset
 
@@ -317,10 +318,10 @@ def main():
     id2label = {0: "Default"}
     label2id = {"Default": 0}
     with open(data_args.label_path) as f:
-    for e_id, type_l in enumerate(f):
-        event_type = type_l.strip()
-        id2label[e_id + 1] = event_type
-        label2id[event_type] = e_id + 1
+        for e_id, type_l in enumerate(f):
+            event_type = type_l.strip()
+            id2label[e_id + 1] = event_type
+            label2id[event_type] = e_id + 1
 
 
 
@@ -489,7 +490,7 @@ def main():
         #     remove_columns=column_names,
         #     load_from_cache_file=not data_args.overwrite_cache,
         # )
-        train_dataset = datasets["train"].map(word2wordpiece_offset).map(example2instance, batched=True)
+        train_dataset = datasets["train"].map(word2wordpiece_offset).map(example2instance, batched=True, remove_columns=datasets["train"].column_names)
         train_dataset_dict = {}
         for id in range(len(id2label)):
             train_dataset_dict[id] = train_dataset.filter(lambda x: x["labels"] == id)
